@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reddit Posts Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        
+        .post-container {
+            position: relative;
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .post-title {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+        
+        .post-title a {
+            color: #1a1a1b;
+            text-decoration: none;
+        }
+        
+        .post-title a:hover {
+            color: #0079d3;
+        }
+        
+        .post-meta {
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        .navigation {
+            position: fixed;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 24px;
+            cursor: pointer;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            padding: 20px;
+            border-radius: 50%;
+            transition: background 0.3s;
+        }
+        
+        .navigation:hover {
+            background: rgba(0,0,0,0.8);
+        }
+        
+        #prev {
+            left: 20px;
+        }
+        
+        #next {
+            right: 20px;
+        }
+        
+        .subreddit-badge {
+            background: #ff4500;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            margin-bottom: 10px;
+            display: inline-block;
+        }
+        
+        .score {
+            font-weight: bold;
+            color: #1a1a1b;
+        }
+
+        .flash-message {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background-color: #ff4444;
+            color: white;
+        }
+
+        .post-counter {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}
+                <div class="flash-message">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div id="posts">
+        {% for post in posts %}
+        <div class="post-container" id="post-{{loop.index0}}">
+            <span class="subreddit-badge">r/{{post.subreddit}}</span>
+            <div class="post-title">
+                <a href="{{post.url}}" target="_blank">{{post.title}}</a>
+            </div>
+            <div class="post-meta">
+                Score: <span class="score">{{post.score}}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="navigation" id="prev" onclick="showPrevious()">←</div>
+    <div class="navigation" id="next" onclick="showNext()">→</div>
+    <div class="post-counter" id="counter"></div>
+
+    <script>
+        let currentPost = 0;
+        const posts = document.querySelectorAll('.post-container');
+        
+        function hideAllPosts() {
+            posts.forEach(post => post.style.display = 'none');
+        }
+        
+        function updateCounter() {
+            document.getElementById('counter').textContent = 
+                `${currentPost + 1} / ${posts.length}`;
+        }
+        
+        function showPost(index) {
+            hideAllPosts();
+            posts[index].style.display = 'block';
+            updateCounter();
+        }
+        
+        function showNext() {
+            currentPost = (currentPost + 1) % posts.length;
+            showPost(currentPost);
+        }
+        
+        function showPrevious() {
+            currentPost = (currentPost - 1 + posts.length) % posts.length;
+            showPost(currentPost);
+        }
+        
+        // Klavye navigasyonu
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'ArrowRight') showNext();
+            if (event.key === 'ArrowLeft') showPrevious();
+        });
+        
+        // Başlangıçta ilk postu göster
+        hideAllPosts();
+        showPost(0);
+    </script>
+</body>
+</html>
