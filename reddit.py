@@ -3,176 +3,255 @@ import requests
 import concurrent.futures
 import time
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
+from random import uniform, choice
+import os
+from datetime import datetime, timedelta
+from fake_useragent import UserAgent
 
-# Belirtilen subredditten "hot" gönderileri çekme
-def get_hot_posts(subreddit, limit=10):
-    url = f"https://old.reddit.com/r/{subreddit}/hot/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            print(f"Error fetching r/{subreddit}: {response.status_code}")
-            return []
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        posts = soup.find_all("div", {"class": "thing"}, limit=limit)
-        result = []
+SUBREDDITS_FILE = 'subreddits.json'
 
-        for post in posts:
-            try:
-                title = post.find("a", {"class": "title"}).text
-                score = post.find("div", {"class": "score unvoted"}).text
-                link = post.get("data-url")
-                permalink = post.get("data-permalink")
+class RedditFetcher:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        self.last_request_time = None
+        self.min_request_interval = 3
+        self.timeout = 5  # Reduced timeout from 10 to 5 seconds
+
+    def get_post(self, subreddit):
+        if self.last_request_time:
+            elapsed = time.time() - self.last_request_time
+            if elapsed < self.min_request_interval:
+                sleep_time = self.min_request_interval - elapsed
+                logger.debug(f"Sleeping for {sleep_time:.2f} seconds to respect rate limits.")
+                time.sleep(sleep_time)
+
+        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=1"
+        
+        try:
+            self.last_request_time = time.time()
+            response = self.session.get(url, timeout=self.timeout)
+            
+            if response.status_code == 429:  # Rate limit
+                logger.warning(f"Rate limit hit for r/{subreddit}, waiting...")
+                time.sleep(self.min_request_interval * 2)
+                return None
                 
-                full_link = f"https://reddit.com{permalink}" if permalink else link
-                
-                result.append({
-                    "title": title,
-                    "score": score,
-                    "link": full_link,
-                    "subreddit": subreddit
-                })
-            except (AttributeError, TypeError) as e:
-                print(f"Error parsing post in r/{subreddit}: {e}")
-                continue
+            if response.status_code != 200:
+                logger.error(f"Error fetching r/{subreddit}: Status code {response.status_code}")
+                return None
 
-        return result
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching r/{subreddit}: {e}")
-        return []
+            data = response.json()
+            
+            if not data.get('data', {}).get('children'):
+                logger.info(f"No posts found in r/{subreddit}")
+                return None
+
+            for post in data['data']['children']:
+                if not post['data'].get('stickied', False):
+                    return self.extract_post_data(post['data'], subreddit)
+            
+            return None
+
+        except requests.Timeout:
+            logger.error(f"Timeout while fetching r/{subreddit}")
+            return None
+        except requests.RequestException as e:
+            logger.error(f"Network error while fetching r/{subreddit}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error while fetching r/{subreddit}: {e}")
+            return None
+
+    def extract_post_data(self, post_data, subreddit):
+        try:
+            return {
+                'title': post_data.get('title', ''),
+                'url': f"https://www.reddit.com{post_data.get('permalink', '')}",
+                'score': str(post_data.get('score', '0')),
+                'subreddit': subreddit,
+                'media_url': post_data.get('url_overridden_by_dest', ''),
+                'thumbnail': post_data.get('thumbnail', ''),
+                'author': post_data.get('author', '[deleted]'),
+                'num_comments': post_data.get('num_comments', 0),
+                'selftext': post_data.get('selftext', ''),
+                'is_self': post_data.get('is_self', False),
+                'created_utc': post_data.get('created_utc', 0),
+                'domain': post_data.get('domain', ''),
+                'external_url': post_data.get('url', ''),
+                'post_hint': post_data.get('post_hint', '')
+            }
+        except Exception as e:
+            logger.error(f"Error extracting post data: {e}")
+            return None
 
 def get_subreddits_from_url(url):
-    # Extract subreddits from the URL
-    # Remove 'https://old.reddit.com/r/' from the start
-    subreddits_part = url.split('/r/')[-1].strip('/')
-    # Split by '+' to get individual subreddits
-    subreddits = subreddits_part.split('+')
-    # Remove any empty strings and user mentions
-    subreddits = [s for s in subreddits if s and not s.startswith('u_')]
+    """Extract subreddits from a Reddit URL"""
+    url = url.lstrip('@')
+    
+    if 'reddit.com/r/' in url:
+        subreddits_part = url.split('/r/')[-1].strip('/')
+    else:
+        subreddits_part = url.strip('/')
+    
+    subreddits = [
+        s for s in subreddits_part.split('+')
+        if s and not s.startswith('u_')
+    ]
+    
+    logger.info(f"Extracted {len(subreddits)} subreddits from URL: {subreddits}")
     return subreddits
 
-def process_subreddit(subreddit):
-    time.sleep(0.5)  # Add small delay between requests
-    print(f"Processing r/{subreddit}...")
-    return get_hot_posts(subreddit, limit=1)
+class RedditQueue:
+    def __init__(self, buffer_size=5):
+        self.fetcher = RedditFetcher()
+        self.buffer_size = buffer_size
+        self.current_posts = []
+        self.subreddits = []
+        self.current_index = 0
+        self.load_subreddits()
+        self.retry_delay = 3
+        self.max_retries = 3
+        self.last_fetched_index = -1
 
-def get_first_non_sticky_post(subreddit):
-    url = f"https://www.reddit.com/r/{subreddit}/.json"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    
-    try:
-        response = requests.get(url, headers=headers)
-        data = response.json()
+    def get_current_posts(self):
+        """Return the current posts in the buffer"""
+        return self.current_posts
+
+    def initialize_buffer(self):
+        """Initial fetch of only the first buffer_size posts"""
+        logger.info("Initializing post buffer...")
+        while len(self.current_posts) < self.buffer_size and self.current_index < len(self.subreddits):
+            try:
+                new_post = self.fetch_next_post()
+                if new_post:
+                    self.current_posts.append(new_post)
+                    logger.info(f"Added initial post from r/{new_post['subreddit']}")
+                time.sleep(2)  # Respect rate limits
+            except Exception as e:
+                logger.error(f"Error during initialization: {e}")
+                time.sleep(2)
         
-        for post in data['data']['children']:
-            if not post['data']['stickied']:
-                return {
-                    'title': post['data']['title'],
-                    'url': f"https://www.reddit.com{post['data']['permalink']}",
-                    'score': str(post['data']['score']),
-                    'subreddit': subreddit
-                }
+        logger.info(f"Buffer initialized with {len(self.current_posts)} posts")
+        return self.current_posts
+
+    def advance_queue(self):
+        """Remove oldest post and fetch just one new post"""
+        logger.debug(f"Advancing queue. Current index: {self.current_index}, Total subreddits: {len(self.subreddits)}")
+        
+        if not self.current_posts:
+            return self.initialize_buffer()
+
+        # Remove the oldest post
+        if self.current_posts:
+            removed = self.current_posts.pop(0)
+            logger.info(f"Removed post from r/{removed['subreddit']}")
+
+        # Try to fetch new posts until we get one or run out of attempts
+        attempts = 0
+        max_attempts = 5  # Increased from 3 to 5
+        retry_delay = 2
+
+        while len(self.current_posts) < self.buffer_size and attempts < max_attempts:
+            if self.current_index >= len(self.subreddits):
+                logger.info("Reached end of subreddits")
+                break
+
+            try:
+                new_post = self.fetch_next_post()
+                if new_post:
+                    self.current_posts.append(new_post)
+                    logger.info(f"Added new post from r/{new_post['subreddit']}")
+                    break
                 
-    except Exception as e:
-        print(f"Error fetching {subreddit}: {e}")
-        return None
+                attempts += 1
+                logger.warning(f"Failed to fetch post, attempt {attempts}/{max_attempts}")
+                time.sleep(retry_delay)
+                retry_delay *= 1.5  # Increase delay with each attempt
+                
+            except Exception as e:
+                logger.error(f"Error fetching post: {e}")
+                attempts += 1
+                time.sleep(retry_delay)
+                retry_delay *= 1.5
 
-def get_all_posts():
-    # Subreddit listesi
-    subreddits = [
-        "AskCulinary", "ArtificialInteligence", "ChatGPTCoding", "ClaudeAI",
-        "ChatGPTPromptGenius", "ChatGPT", "AJelqForYou", "CodingTR", "Documentaries",
-        "Cooking", "Dryeyes", "EnglishLearning", "FREEMEDIAHECKYEAH", "GetMotivated",
-        "HENRYfinance", "Hyperhidrosis", "ITCareerQuestions", "MovieSuggestions",
-        "MuslumanTurkiye", "OpenAI", "OutOfTheLoop", "Piracy", "ProgrammerHumor",
-        "Psikoloji", "SebDerm", "SideProject", "SkincareAddiction", "StresOdasi",
-        "TopSecretRecipes", "Turkce", "Turkey", "WorldPanorama", "Yatirim",
-        "androidapps", "announcements", "applesucks", "biology", "bloodydisgusting",
-        "booksuggestions", "changemyview", "codingbootcamp", "compsci",
-        "computerscience", "computersciencehub", "coolguides", "csMajors",
-        "cscareerquestions", "cscareerquestionsEU", "cursor", "dessert",
-        "etymology", "felsefe", "financialindependence", "fitbod", "food",
-        "gamingsuggestions", "grammar", "horror", "intiharetme", "investing",
-        "learnprogramming", "malefashionadvice", "musicsuggestions", "origami",
-        "passive_income", "poorlydrawnlines", "printSF", "puzzles",
-        "puzzlevideogames", "science", "secilmiskitap", "soccer",
-        "suggestmeabook", "televisionsuggestions", "tipofmyjoystick", "trackers"
-    ]
+        # If we couldn't fetch any new posts and the buffer is empty, reset
+        if not self.current_posts and self.current_index >= len(self.subreddits):
+            logger.info("Resetting queue")
+            self.current_index = 0
+            return self.initialize_buffer()
 
-    all_posts = []
-    
-    # ThreadPoolExecutor kullanarak paralel istek at
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(get_first_non_sticky_post, subreddits)
+        logger.debug(f"Current buffer state: Buffer size: {len(self.current_posts)}, Current index: {self.current_index}, Total subreddits: {len(self.subreddits)}")
         
-        for post in results:
+        return self.current_posts
+
+    def fetch_next_post(self, retries=0):
+        """Fetch a post from the next subreddit"""
+        if self.current_index >= len(self.subreddits):
+            logger.info("No more subreddits to fetch from")
+            return None
+
+        subreddit = self.subreddits[self.current_index]
+        logger.debug(f"Attempting to fetch post from r/{subreddit} (index: {self.current_index})")
+        
+        try:
+            time.sleep(self.retry_delay)
+            post = self.fetcher.get_post(subreddit)
+            
             if post:
-                all_posts.append(post)
-    
-    # Score'a göre sırala
-    all_posts.sort(key=lambda x: parse_score(x.get('score', '0')), reverse=True)
-    return all_posts
+                self.last_fetched_index = self.current_index
+                self.current_index += 1
+                self.retry_delay = 3
+                logger.info(f"Successfully fetched post from r/{subreddit}")
+                return post
+            
+            logger.info(f"No post available from r/{subreddit}")
+            self.current_index += 1
+            return None
 
-def parse_score(score_str):
-    try:
-        if not score_str or score_str == '•':
-            return 0
-        if 'k' in score_str.lower():
-            num = float(score_str.lower().replace('k', ''))
-            return int(num * 1000)
-        return int(score_str)
-    except (ValueError, TypeError):
-        return 0
+        except Exception as e:
+            logger.error(f"Error fetching from r/{subreddit}: {e}")
+            if "429" in str(e) and retries < self.max_retries:
+                wait_time = self.retry_delay * (2 ** retries)
+                logger.warning(f"Rate limited. Waiting {wait_time} seconds...")
+                time.sleep(wait_time)
+                return self.fetch_next_post(retries + 1)
+            
+            self.current_index += 1
+            return None
 
-# Ana işlem
+    def load_subreddits(self):
+        """Load subreddits from file"""
+        try:
+            with open(SUBREDDITS_FILE, 'r') as f:
+                data = json.load(f)
+                self.subreddits = data['subreddits']
+                logger.info(f"Loaded {len(self.subreddits)} subreddits")
+        except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+            logger.error(f"Error loading subreddits file: {e}")
+            self.subreddits = []
+
+    def get_progress(self):
+        """Get progress information"""
+        return {
+            'current_index': self.current_index,
+            'total_subreddits': len(self.subreddits),
+            'buffer_size': len(self.current_posts),
+            'remaining_subreddits': len(self.subreddits) - self.current_index,
+            'last_fetched': self.last_fetched_index
+        }
+
 def main():
-    url = "https://old.reddit.com/r/AJelqForYou+ArtificialInteligence+AskCulinary+ChatGPT+ChatGPTCoding+ChatGPTPromptGenius+ClaudeAI+CodingTR+Cooking+Documentaries+Dryeyes+EnglishLearning+FREEMEDIAHECKYEAH+GetMotivated+HENRYfinance+Hyperhidrosis+ITCareerQuestions+MovieSuggestions+MuslumanTurkiye+OpenAI+OutOfTheLoop+Piracy+ProgrammerHumor+Psikoloji+SebDerm+SideProject+SkincareAddiction+StresOdasi+TopSecretRecipes+Turkce+Turkey+WorldPanorama+Yatirim+androidapps+announcements+applesucks+biology+bloodydisgusting+booksuggestions+changemyview+codingbootcamp+compsci+computerscience+computersciencehub+coolguides+csMajors+cscareerquestions+cscareerquestionsEU+cursor+dessert+etymology+felsefe+financialindependence+fitbod+food+gamingsuggestions+grammar+horror+intiharetme+investing+learnprogramming+malefashionadvice+musicsuggestions+origami+passive_income+poorlydrawnlines+printSF+puzzles+puzzlevideogames+science+secilmiskitap+soccer+suggestmeabook+televisionsuggestions+tipofmyjoystick+trackers+u_PCEngTr+u_Royal_Toad/"
-    
-    print("Extracting subreddits from URL...")
-    subreddits = get_subreddits_from_url(url)
-    
-    print(f"Found {len(subreddits)} subreddits")
-    print("Fetching hot posts...")
-    
-    start_time = time.time()
-    all_posts = []
-    
-    # Use ThreadPoolExecutor for concurrent processing
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        # Submit all tasks and get futures
-        future_to_subreddit = {executor.submit(process_subreddit, subreddit): subreddit 
-                             for subreddit in subreddits}
-        
-        # Process completed futures as they come in
-        for future in concurrent.futures.as_completed(future_to_subreddit):
-            posts = future.result()
-            all_posts.extend(posts)
-
-    end_time = time.time()
-    
-    # Print results
-    print(f"\nFetched {len(all_posts)} posts in {end_time - start_time:.2f} seconds")
-    if not all_posts:
-        print("No posts were fetched. This might be due to rate limiting or parsing errors.")
-        return
-        
-    print("\nTop posts from each subreddit:")
-    # Sort posts by score for better presentation
-    all_posts.sort(key=lambda x: parse_score(x.get('score', '0')), reverse=True)
-    
-    for post in all_posts:
-        print(f"\nSubreddit: r/{post['subreddit']}")
-        print(f"Title: {post['title']}")
-        print(f"Score: {post['score']}")
-        print(f"URL: {post['link']}")
-        print("-" * 80)
+    # This main function can be removed if this file is only used as a module
+    pass
 
 if __name__ == "__main__":
     main()
