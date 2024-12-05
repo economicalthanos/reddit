@@ -73,12 +73,25 @@ class RedditFetcher:
 
     def extract_post_data(self, post_data, subreddit):
         try:
+            media_url = ''
+            if post_data.get('is_video'):
+                # v.redd.it videoları için
+                if 'v.redd.it' in post_data.get('url', ''):
+                    media_url = post_data.get('url')
+                # Diğer video kaynakları için
+                elif post_data.get('media', {}).get('reddit_video', {}):
+                    media_url = post_data['media']['reddit_video'].get('fallback_url', '')
+                else:
+                    media_url = post_data.get('url_overridden_by_dest', '')
+            else:
+                media_url = post_data.get('url_overridden_by_dest', '')
+
             return {
                 'title': post_data.get('title', ''),
                 'url': f"https://www.reddit.com{post_data.get('permalink', '')}",
                 'score': str(post_data.get('score', '0')),
                 'subreddit': subreddit,
-                'media_url': post_data.get('url_overridden_by_dest', ''),
+                'media_url': media_url,
                 'thumbnail': post_data.get('thumbnail', ''),
                 'author': post_data.get('author', '[deleted]'),
                 'num_comments': post_data.get('num_comments', 0),
@@ -87,7 +100,8 @@ class RedditFetcher:
                 'created_utc': post_data.get('created_utc', 0),
                 'domain': post_data.get('domain', ''),
                 'external_url': post_data.get('url', ''),
-                'post_hint': post_data.get('post_hint', '')
+                'post_hint': post_data.get('post_hint', ''),
+                'is_video': post_data.get('is_video', False)
             }
         except Exception as e:
             logger.error(f"Error extracting post data: {e}")
@@ -111,7 +125,7 @@ def get_subreddits_from_url(url):
     return subreddits
 
 class RedditQueue:
-    def __init__(self, buffer_size=5):
+    def __init__(self, buffer_size=3):
         self.fetcher = RedditFetcher()
         self.buffer_size = buffer_size
         self.current_posts = []
@@ -121,104 +135,110 @@ class RedditQueue:
         self.retry_delay = 3
         self.max_retries = 3
         self.last_fetched_index = -1
+        self.min_buffer_size = 2  # Current post + 2 next posts
+        logger.debug(f"Initialized RedditQueue with buffer_size={buffer_size}, min_buffer_size={self.min_buffer_size}")
 
     def get_current_posts(self):
         """Return the current posts in the buffer"""
         return self.current_posts
 
     def initialize_buffer(self):
-        """Initial fetch of only the first buffer_size posts"""
-        logger.info("Initializing post buffer...")
+        """Initial fetch of posts to fill the buffer"""
+        logger.debug(f"=== INITIALIZE BUFFER START ===")
+        logger.debug(f"Target buffer size: {self.buffer_size}")
+        self.current_posts = []
+        
         while len(self.current_posts) < self.buffer_size and self.current_index < len(self.subreddits):
             try:
+                logger.debug(f"Fetching initial post... (current size: {len(self.current_posts)})")
                 new_post = self.fetch_next_post()
                 if new_post:
                     self.current_posts.append(new_post)
-                    logger.info(f"Added initial post from r/{new_post['subreddit']}")
-                time.sleep(2)  # Respect rate limits
+                    logger.debug(f"Added initial post from r/{new_post['subreddit']}")
+                else:
+                    logger.debug("Failed to fetch initial post")
+                time.sleep(1)  # Rate limiting
             except Exception as e:
                 logger.error(f"Error during initialization: {e}")
-                time.sleep(2)
         
-        logger.info(f"Buffer initialized with {len(self.current_posts)} posts")
+        logger.debug(f"=== INITIALIZE BUFFER END ===")
+        logger.debug(f"Buffer initialized with {len(self.current_posts)} posts: {[p['subreddit'] for p in self.current_posts]}")
         return self.current_posts
 
     def advance_queue(self):
-        """Remove oldest post and fetch just one new post"""
-        logger.debug(f"Advancing queue. Current index: {self.current_index}, Total subreddits: {len(self.subreddits)}")
+        """Remove oldest post and fetch new posts to maintain buffer"""
+        logger.debug(f"\n=== ADVANCE QUEUE START ===")
+        logger.debug(f"BEFORE - Current index: {self.current_index}")
+        logger.debug(f"BEFORE - Buffer size: {len(self.current_posts)}")
+        logger.debug(f"BEFORE - Posts in buffer: {[p['subreddit'] for p in self.current_posts]}")
+        logger.debug(f"BEFORE - Total subreddits: {len(self.subreddits)}")
         
         if not self.current_posts:
+            logger.debug("Buffer empty, initializing...")
             return self.initialize_buffer()
 
-        # Remove the oldest post
-        if self.current_posts:
+        # Her zaman bir sonraki postu fetch et
+        try:
+            logger.debug(f"Attempting to fetch next post at index {self.current_index}")
+            new_post = self.fetch_next_post()
+            if new_post:
+                self.current_posts.append(new_post)
+                logger.debug(f"SUCCESS: Added new post from r/{new_post['subreddit']}")
+                logger.debug(f"New buffer size: {len(self.current_posts)}")
+            else:
+                logger.debug(f"FAILED: Could not fetch post at index {self.current_index}")
+        except Exception as e:
+            logger.error(f"ERROR during fetch: {str(e)}")
+
+        # En eski postu kaldır
+        if len(self.current_posts) > self.buffer_size:
             removed = self.current_posts.pop(0)
-            logger.info(f"Removed post from r/{removed['subreddit']}")
+            logger.debug(f"Removed oldest post from r/{removed['subreddit']}")
+            logger.debug(f"After removal - Buffer size: {len(self.current_posts)}")
 
-        # Try to fetch new posts until we get one or run out of attempts
-        attempts = 0
-        max_attempts = 5  # Increased from 3 to 5
-        retry_delay = 2
-
-        while len(self.current_posts) < self.buffer_size and attempts < max_attempts:
-            if self.current_index >= len(self.subreddits):
-                logger.info("Reached end of subreddits")
-                break
-
-            try:
-                new_post = self.fetch_next_post()
-                if new_post:
-                    self.current_posts.append(new_post)
-                    logger.info(f"Added new post from r/{new_post['subreddit']}")
-                    break
-                
-                attempts += 1
-                logger.warning(f"Failed to fetch post, attempt {attempts}/{max_attempts}")
-                time.sleep(retry_delay)
-                retry_delay *= 1.5  # Increase delay with each attempt
-                
-            except Exception as e:
-                logger.error(f"Error fetching post: {e}")
-                attempts += 1
-                time.sleep(retry_delay)
-                retry_delay *= 1.5
-
-        # If we couldn't fetch any new posts and the buffer is empty, reset
+        # Buffer boşsa ve subredditler bittiyse reset at
         if not self.current_posts and self.current_index >= len(self.subreddits):
-            logger.info("Resetting queue")
+            logger.debug("Resetting queue - reached end of subreddits")
             self.current_index = 0
             return self.initialize_buffer()
 
-        logger.debug(f"Current buffer state: Buffer size: {len(self.current_posts)}, Current index: {self.current_index}, Total subreddits: {len(self.subreddits)}")
-        
+        logger.debug(f"\n=== ADVANCE QUEUE END ===")
+        logger.debug(f"AFTER - Current index: {self.current_index}")
+        logger.debug(f"AFTER - Buffer size: {len(self.current_posts)}")
+        logger.debug(f"AFTER - Posts in buffer: {[p['subreddit'] for p in self.current_posts]}")
         return self.current_posts
 
     def fetch_next_post(self, retries=0):
         """Fetch a post from the next subreddit"""
         if self.current_index >= len(self.subreddits):
-            logger.info("No more subreddits to fetch from")
+            logger.debug(f"FETCH: Index {self.current_index} exceeds subreddit count {len(self.subreddits)}")
             return None
 
         subreddit = self.subreddits[self.current_index]
-        logger.debug(f"Attempting to fetch post from r/{subreddit} (index: {self.current_index})")
+        logger.debug(f"\nFETCH: Attempting r/{subreddit} at index {self.current_index}")
         
         try:
             time.sleep(self.retry_delay)
             post = self.fetcher.get_post(subreddit)
             
             if post:
+                if any(existing['url'] == post['url'] for existing in self.current_posts):
+                    logger.debug(f"FETCH: Post from r/{subreddit} already in buffer, skipping")
+                    self.current_index += 1
+                    return self.fetch_next_post(retries)
+                
+                logger.debug(f"FETCH: Successfully got post from r/{subreddit}")
                 self.last_fetched_index = self.current_index
                 self.current_index += 1
                 self.retry_delay = 3
-                logger.info(f"Successfully fetched post from r/{subreddit}")
                 return post
             
-            logger.info(f"No post available from r/{subreddit}")
+            logger.debug(f"FETCH: No post available from r/{subreddit}")
             self.current_index += 1
-            return None
+            return self.fetch_next_post(retries)
 
         except Exception as e:
-            logger.error(f"Error fetching from r/{subreddit}: {e}")
+            logger.error(f"FETCH ERROR for r/{subreddit}: {e}")
             if "429" in str(e) and retries < self.max_retries:
                 wait_time = self.retry_delay * (2 ** retries)
                 logger.warning(f"Rate limited. Waiting {wait_time} seconds...")
@@ -226,7 +246,7 @@ class RedditQueue:
                 return self.fetch_next_post(retries + 1)
             
             self.current_index += 1
-            return None
+            return self.fetch_next_post(retries)
 
     def load_subreddits(self):
         """Load subreddits from file"""

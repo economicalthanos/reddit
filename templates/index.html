@@ -8,6 +8,8 @@
             background-color: #f0f0f0;
             margin: 0;
             padding: 0;
+            height: 100vh;
+            overflow: hidden;
         }
         
         .post-container {
@@ -114,6 +116,8 @@
             max-width: 100%;
             max-height: 500px;
             border-radius: 4px;
+            margin: 10px 0;
+            display: block;
         }
         
         .post-video {
@@ -173,24 +177,6 @@
             background: #f8f9fa;
             padding: 15px;
             border-radius: 4px;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        
-        .post-selftext.collapsed {
-            max-height: 100px;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .post-selftext.collapsed::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 50px;
-            background: linear-gradient(transparent, #f8f9fa);
         }
         
         .expand-button {
@@ -263,6 +249,8 @@
             max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
+            height: 100vh;
+            box-sizing: border-box;
         }
 
         .sidebar {
@@ -271,22 +259,30 @@
             padding: 15px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            height: fit-content;
             position: sticky;
             top: 20px;
+            height: calc(100vh - 100px);
+            max-height: 600px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
         .main-content {
             flex: 1;
             max-width: 800px;
+            overflow-y: auto;
+            height: 100vh;
+            box-sizing: border-box;
         }
 
         .subreddit-list {
             list-style: none;
             padding: 0;
             margin: 0;
-            max-height: 80vh;
             overflow-y: auto;
+            flex: 1;
+            max-height: calc(100% - 100px);
         }
 
         .subreddit-item {
@@ -329,13 +325,13 @@
             border-radius: 4px;
             margin-bottom: 10px;
             font-size: 14px;
+            margin-bottom: 10px;
+            flex-shrink: 0;
         }
 
         .url-input-container {
-            margin: 20px 0;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 4px;
+            margin-bottom: 10px;
+            flex-shrink: 0;
         }
 
         .url-input {
@@ -375,11 +371,15 @@
         }
 
         .navigation-buttons {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
             display: flex;
             justify-content: center;
             align-items: center;
             gap: 20px;
-            margin: 20px 0;
+            margin: 0;
         }
 
         .nav-button {
@@ -596,6 +596,56 @@
         .post-container.active {
             opacity: 1;
         }
+
+        .post-link-container {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 10px 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .post-link-image {
+            width: 100%;
+            display: block;
+        }
+
+        .post-image {
+            width: 100%;
+            max-height: 500px;
+            object-fit: contain;
+            margin-bottom: 0;
+            background: #f8f9fa;
+        }
+
+        .post-link-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border-top: 1px solid #eee;
+        }
+
+        .post-domain {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .post-open-link {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .post-open-link:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -636,7 +686,7 @@
                 {% endif %}
             {% endwith %}
 
-            <div id="posts">
+            <div class="posts-container">
                 {% for post in posts %}
                 <div class="post-container" id="post-{{loop.index0}}">
                     <span class="subreddit-badge">r/{{post.subreddit}}</span>
@@ -646,43 +696,38 @@
                     
                     <div class="post-content">
                         {% if post.is_self and post.selftext %}
-                            <div class="post-selftext collapsed" id="selftext-{{loop.index0}}">{{ post.selftext }}</div>
-                            <div class="expand-button" onclick="toggleSelftext({{loop.index0}})">Show more</div>
+                            <div class="post-selftext">{{ post.selftext }}</div>
                         {% endif %}
                         
                         {% if post.external_url and not post.is_self %}
-                            <a href="{{ post.external_url }}" class="post-link-header" target="_blank">
-                                <span class="post-domain">{{ post.domain }}</span>
-                                <span class="post-url">{{ post.external_url }}</span>
-                            </a>
+                            <div class="post-link-container">
+                                <a href="{{ post.external_url }}" target="_blank" class="post-link-image">
+                                    <img src="{{ post.thumbnail }}" class="post-image" alt="Post image">
+                                </a>
+                                <div class="post-link-details">
+                                    <span class="post-domain">{{ post.domain.split('/')[0] }}</span>
+                                    <a href="{{ post.external_url }}" class="post-open-link" target="_blank">Open</a>
+                                </div>
+                            </div>
                         {% endif %}
                         
                         {% if post.is_video %}
                             <div class="post-video-container">
-                                <video class="post-video" controls>
-                                    <source src="{{ post.media_url }}" type="video/mp4">
-                                    Your browser does not support the video tag.
-                                </video>
+                                {% if 'v.redd.it' in post.media_url %}
+                                    <video class="post-video" controls autoplay muted loop>
+                                        <source src="{{ post.media_url }}/DASH_720.mp4" type="video/mp4">
+                                        <source src="{{ post.media_url }}/DASH_480.mp4" type="video/mp4">
+                                        <source src="{{ post.media_url }}/DASH_360.mp4" type="video/mp4">
+                                        <source src="{{ post.media_url }}/DASH_240.mp4" type="video/mp4">
+                                        Your browser does not support the video tag.
+                                    </video>
+                                {% else %}
+                                    <video class="post-video" controls>
+                                        <source src="{{ post.media_url }}" type="video/mp4">
+                                        Your browser does not support the video tag.
+                                    </video>
+                                {% endif %}
                             </div>
-                        {% elif post.post_hint == 'image' %}
-                            <img class="post-image" src="{{ post.media_url }}" alt="Post image" onerror="this.style.display='none'">
-                        {% elif post.post_hint == 'hosted:video' or post.post_hint == 'rich:video' %}
-                            <a href="{{ post.url }}" class="post-link" target="_blank">
-                                {% if post.thumbnail and post.thumbnail != 'default' %}
-                                    <img class="post-thumbnail" src="{{ post.thumbnail }}" alt="Video thumbnail">
-                                {% endif %}
-                                <span>Video content - Click to view on Reddit</span>
-                            </a>
-                        {% elif post.post_hint == 'link' and not post.is_media_url %}
-                            <a href="{{ post.external_url }}" class="post-link" target="_blank">
-                                {% if post.thumbnail and post.thumbnail != 'default' %}
-                                    <img class="post-thumbnail" src="{{ post.thumbnail }}" alt="Link thumbnail">
-                                {% endif %}
-                                <div class="post-link-content">
-                                    <span class="post-link-domain">{{ post.domain }}</span>
-                                    <span class="post-link-url">{{ post.external_url }}</span>
-                                </div>
-                            </a>
                         {% endif %}
                     </div>
                     
@@ -759,42 +804,26 @@
         }
 
         async function showNextPost() {
-            console.log('Showing next post');
+            console.log('\n=== showNextPost START ===');
+            console.log('Current post index:', currentPost);
+            console.log('Total posts in buffer:', posts.length);
+            
             const nextButton = document.getElementById('nextButton');
-            nextButton.disabled = true;
-
-            try {
-                if (currentPost < posts.length - 1) {
-                    // If we have more posts in the current buffer
-                    hideAllPosts();
-                    currentPost++;
-                    showPost(currentPost);
-                    updateCounter();
-                    
-                    // Proactively fetch more posts when we're near the end of our buffer
-                    if (currentPost >= posts.length - 2) {  // When we're at the second-to-last post
-                        await fetchNextPost(true);  // true indicates this is a background fetch
-                    }
-                } else {
-                    // Need to fetch more posts immediately
-                    await fetchNextPost(false);  // false indicates this is an immediate fetch
-                }
-            } catch (error) {
-                console.error('Error in showNextPost:', error);
-                showErrorMessage('Error showing next post');
-            } finally {
-                nextButton.disabled = false;
-                updateNavigationButtons();
-            }
-        }
-
-        async function fetchNextPost(isBackgroundFetch = false) {
-            console.log('Fetching next posts');
-            if (!isBackgroundFetch) {
-                showLoadingIndicator();
+            
+            // Eğer buffer'da daha fazla post varsa, butonu disable etme
+            if (currentPost >= posts.length - 2) {
+                nextButton.disabled = true;
             }
 
+            // Önce mevcut postu göster
+            hideAllPosts();
+            currentPost++;
+            showPost(currentPost);
+            updateCounter();
+
+            // Sonra arka planda yeni postu fetch et
             try {
+                console.log('Fetching new post from server');
                 const response = await fetch('/next_post', {
                     method: 'POST',
                     headers: {
@@ -803,42 +832,40 @@
                 });
                 
                 const data = await response.json();
-                console.log('Received data:', data);
+                console.log('Server response:', data);
                 
                 if (data.success && data.posts && data.posts.length > 0) {
-                    if (isBackgroundFetch) {
-                        // Append new posts to existing ones
-                        posts = [...posts, ...data.posts];
-                        appendNewPosts(data.posts);
-                    } else {
-                        // Replace existing posts
-                        updatePostsDisplay(data.posts);
-                        currentPost = 0;
-                    }
+                    posts.push(data.posts[data.posts.length - 1]);
+                    appendNewPosts([data.posts[data.posts.length - 1]]);
                     updateProgress(data.progress);
-                    showPost(currentPost);
-                    updateCounter();
+                    // Yeni post geldiğinde butonu tekrar aktif et
+                    nextButton.disabled = false;
                 } else {
                     showErrorMessage(data.error || 'No more posts available');
                 }
             } catch (error) {
-                console.error('Error fetching posts:', error);
-                showErrorMessage('Error fetching posts. Please try again.');
-            } finally {
-                if (!isBackgroundFetch) {
-                    hideLoadingIndicator();
-                }
-                updateNavigationButtons();
+                console.error('Error in showNextPost:', error);
+                showErrorMessage('Error showing next post');
             }
+            
+            console.log('=== showNextPost END ===');
+            console.log('New post index:', currentPost);
+            console.log('New total posts:', posts.length);
         }
 
         function showLoadingIndicator() {
+            const postsContainer = document.querySelector('.posts-container');
+            if (!postsContainer) {
+                console.error('Posts container not found');
+                return;
+            }
+
             const existing = document.querySelector('.loading-indicator');
             if (!existing) {
                 const loadingIndicator = document.createElement('div');
                 loadingIndicator.className = 'loading-indicator';
                 loadingIndicator.innerHTML = '<div class="spinner"></div> Loading next posts...';
-                document.querySelector('.posts-container').appendChild(loadingIndicator);
+                postsContainer.appendChild(loadingIndicator);
             }
         }
 
@@ -948,10 +975,18 @@
         }
 
         function showErrorMessage(message) {
+            const postsContainer = document.querySelector('.posts-container');
+            if (!postsContainer) {
+                console.error('Posts container not found');
+                return;
+            }
+
             const messageDiv = document.createElement('div');
             messageDiv.className = 'alert alert-info';
             messageDiv.textContent = message;
-            document.querySelector('.posts-container').prepend(messageDiv);
+            postsContainer.insertBefore(messageDiv, postsContainer.firstChild);
+
+            // Remove message after 5 seconds
             setTimeout(() => messageDiv.remove(), 5000);
         }
 
@@ -1124,13 +1159,17 @@
         }
 
         function showErrorMessage(message) {
+            const postsContainer = document.querySelector('.posts-container');
+            if (!postsContainer) {
+                console.error('Posts container not found');
+                return;
+            }
+
             const messageDiv = document.createElement('div');
             messageDiv.className = 'alert alert-info';
             messageDiv.textContent = message;
-            
-            const container = document.querySelector('.posts-container');
-            container.insertBefore(messageDiv, container.firstChild);
-            
+            postsContainer.insertBefore(messageDiv, postsContainer.firstChild);
+
             // Remove message after 5 seconds
             setTimeout(() => messageDiv.remove(), 5000);
         }
@@ -1140,21 +1179,102 @@
         // Add this new function to append posts to the display
         function appendNewPosts(newPosts) {
             console.log('Appending new posts:', newPosts.length);
-            const postsContainer = document.querySelector('#posts');
+            const postsContainer = document.querySelector('.posts-container');
             
             newPosts.forEach((post, index) => {
                 const postDiv = document.createElement('div');
                 postDiv.className = 'post-container';
                 postDiv.id = `post-${posts.length - newPosts.length + index}`;
-                postDiv.style.display = 'none';  // Hide by default
+                postDiv.style.display = 'none';
                 
-                // Add the same post HTML structure as in updatePostsDisplay
+                const isImage = post.external_url && post.external_url.toLowerCase().match(/\.(jpg|jpeg|png|gif)$/);
+                
                 postDiv.innerHTML = `
                     <span class="subreddit-badge">r/${post.subreddit}</span>
                     <div class="post-title">
                         <a href="${post.url}" target="_blank">${escapeHtml(post.title)}</a>
                     </div>
-                    <!-- Rest of your post HTML structure -->
+                    
+                    <div class="post-content">
+                        ${post.is_self && post.selftext ? `
+                            <div class="post-selftext">${escapeHtml(post.selftext)}</div>
+                        ` : ''}
+                        
+                        ${post.external_url && !post.is_self ? 
+                            isImage ? `
+                                <img src="${post.external_url}" class="post-image" alt="Post image">
+                            ` : `
+                                <a href="${post.external_url}" class="post-link-header" target="_blank">
+                                    <span class="post-domain">${post.domain}</span>
+                                    <span class="post-url">${post.external_url}</span>
+                                </a>
+                            `
+                        : ''}
+                        
+                        ${post.is_video ? `
+                            <div class="post-video-container">
+                                ${post.media_url.includes('v.redd.it') ? `
+                                    <video class="post-video" controls autoplay muted loop>
+                                        <source src="${post.media_url}/DASH_720.mp4" type="video/mp4">
+                                        <source src="${post.media_url}/DASH_480.mp4" type="video/mp4">
+                                        <source src="${post.media_url}/DASH_360.mp4" type="video/mp4">
+                                        <source src="${post.media_url}/DASH_240.mp4" type="video/mp4">
+                                        Your browser does not support the video tag.
+                                    </video>
+                                ` : `
+                                    <video class="post-video" controls>
+                                        <source src="${post.media_url}" type="video/mp4">
+                                        Your browser does not support the video tag.
+                                    </video>
+                                `}
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="post-meta">
+                        <span class="score">↑ ${post.score}</span>
+                        <span class="post-author">u/${post.author}</span>
+                        <span class="post-comments">
+                            <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24">
+                                <path fill="currentColor" d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M20,16H6L4,18V4H20V16Z" />
+                            </svg>
+                            ${post.num_comments} comments
+                        </span>
+                        <span class="post-time">${timeSince(post.created_utc * 1000)}</span>
+                    </div>
+                `;
+                
+                postsContainer.appendChild(postDiv);
+            });
+        }
+    </script>
+
+    <script>
+        function fetchPosts() {
+            // ... existing code ...
+            posts.forEach(post => {
+                const postDiv = document.createElement('div');
+                postDiv.className = 'post-container';
+                
+                // Check if the post has an image link
+                const imageUrl = post.preview ? post.preview.images[0].source.url : null;
+                const linkImageUrl = post.url.includes('redd.it') ? post.url.replace('https://www.reddit.com', 'https://external-preview.redd.it') : null;
+
+                postDiv.innerHTML = `
+                    <h2>${post.title}</h2>
+                    ${imageUrl ? `<img src="${imageUrl}" alt="Post image" />` : ''}
+                    ${!imageUrl && linkImageUrl ? `<img src="${linkImageUrl}" alt="Link image" />` : ''}
+                    <div class="post-meta">
+                        <span class="score">↑ ${post.score}</span>
+                        <span class="post-author">u/${post.author}</span>
+                        <span class="post-comments">
+                            <svg style="width: 16px; height: 16px;" viewBox="0 0 24 24">
+                                <path fill="currentColor" d="M20,2H4A2,2 0 0,0 2,4V22L6,18H20A2,2 0 0,0 22,16V4A2,2 0 0,0 20,2M20,16H6L4,18V4H20V16Z" />
+                            </svg>
+                            ${post.num_comments} comments
+                        </span>
+                        <span class="post-time">${timeSince(post.created_utc * 1000)}</span>
+                    </div>
                 `;
                 
                 postsContainer.appendChild(postDiv);
