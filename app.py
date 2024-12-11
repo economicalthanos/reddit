@@ -3,6 +3,7 @@ from reddit import RedditQueue, get_subreddits_from_url
 import json
 import os
 import logging
+import time
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'
@@ -74,36 +75,51 @@ def update_subreddits():
 @app.route('/next_post', methods=['POST'])
 def next_post():
     try:
-        logger.debug("Received request to fetch next post.")
+        logger.debug("\n=== /next_post ROUTE START ===")
+        logger.debug(f"Current buffer state before fetch: {[p['subreddit'] for p in reddit_queue.get_current_posts()]}")
+        logger.debug(f"Current progress: {reddit_queue.get_progress()}")
+        
         posts = reddit_queue.advance_queue()
         progress = reddit_queue.get_progress()
         
-        # Convert posts to JSON-safe format
-        posts_data = []
-        for post in posts:
-            posts_data.append({
-                'title': post.get('title', ''),
-                'url': post.get('url', ''),
-                'score': str(post.get('score', '0')),
-                'subreddit': post.get('subreddit', ''),
-                'media_url': post.get('media_url', ''),
-                'thumbnail': post.get('thumbnail', ''),
-                'author': post.get('author', ''),
-                'num_comments': post.get('num_comments', 0),
-                'selftext': post.get('selftext', ''),
-                'is_self': post.get('is_self', False),
-                'created_utc': post.get('created_utc', 0),
-                'domain': post.get('domain', ''),
-                'external_url': post.get('external_url', ''),
-                'post_hint': post.get('post_hint', '')
-            })
+        logger.debug(f"Buffer state after fetch: {[p['subreddit'] for p in posts]}")
+        logger.debug(f"New progress: {progress}")
         
-        logger.debug(f"Sending posts: {[p['subreddit'] for p in posts_data]}")
-        return jsonify({
-            'success': True,
-            'posts': posts_data,
-            'progress': progress
-        })
+        if posts and len(posts) > 0:
+            new_post = posts[-1]
+            post_data = {
+                'title': new_post.get('title', ''),
+                'url': new_post.get('url', ''),
+                'score': str(new_post.get('score', '0')),
+                'subreddit': new_post.get('subreddit', ''),
+                'media_url': new_post.get('media_url', ''),
+                'thumbnail': new_post.get('thumbnail', ''),
+                'author': new_post.get('author', ''),
+                'num_comments': new_post.get('num_comments', 0),
+                'selftext': new_post.get('selftext', ''),
+                'is_self': new_post.get('is_self', False),
+                'created_utc': new_post.get('created_utc', 0),
+                'domain': new_post.get('domain', ''),
+                'external_url': new_post.get('external_url', ''),
+                'post_hint': new_post.get('post_hint', ''),
+                'dash_url': new_post.get('dash_url'),
+                'is_video': new_post.get('is_video', False),
+            }
+            
+            logger.debug(f"Sending new post from r/{new_post['subreddit']}")
+            return jsonify({
+                'success': True,
+                'posts': [post_data],
+                'progress': progress
+            })
+        else:
+            logger.debug("No posts available to send")
+            return jsonify({
+                'success': False,
+                'error': 'No more posts available',
+                'posts': [],
+                'progress': progress
+            })
     except Exception as e:
         logger.error(f"Error in /next_post route: {e}", exc_info=True)
         return jsonify({
