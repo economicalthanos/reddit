@@ -9,7 +9,8 @@ This project is a web application that allows users to view posts from various s
 - Filter posts by subreddit.
 - Display images, videos, and galleries.
 - Update subreddit list via a URL.
-- Automatic backup script included
+- Automatic backup script with AI-powered commit messages
+- Smart file change detection
 
 ## Installation
 
@@ -39,8 +40,9 @@ This project is a web application that allows users to view posts from various s
 ## Backup
 
 The repository includes an automatic backup script (`backup.py`) that:
-- Commits all changes with descriptive messages
-- Updates file timestamps
+- Generates intelligent commit messages based on file changes
+- Analyzes code modifications for meaningful descriptions
+- Detects the type of changes (functions, classes, documentation, etc.)
 - Pushes to GitHub automatically
 
 To use it, simply run:
