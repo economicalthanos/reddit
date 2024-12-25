@@ -9,14 +9,15 @@ This project is a web application that allows users to view posts from various s
 - Filter posts by subreddit.
 - Display images, videos, and galleries.
 - Update subreddit list via a URL.
+- Automatic backup script included
 
 ## Installation
 
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourusername/reddit-posts-viewer.git
-   cd reddit-posts-viewer
+   git clone https://github.com/economicalthanos/reddit.git
+   cd reddit
    ```
 
 2. **Install dependencies:**
@@ -34,6 +35,18 @@ This project is a web application that allows users to view posts from various s
 4. **Access the application:**
 
    Open your web browser and go to `http://localhost:5000`.
+
+## Backup
+
+The repository includes an automatic backup script (`backup.py`) that:
+- Commits all changes with descriptive messages
+- Updates file timestamps
+- Pushes to GitHub automatically
+
+To use it, simply run:
+```bash
+python backup.py
+```
 
 ## Configuration
 
