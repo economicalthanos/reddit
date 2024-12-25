@@ -5,59 +5,58 @@ import os
 
 def run_command(cmd):
     try:
-        result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+        # Run with shell=False for better security
+        if isinstance(cmd, str):
+            cmd = cmd.split()
+        result = subprocess.run(cmd, capture_output=True, text=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         print(f"Error: {e.stderr}")
         return None
-
-def update_timestamps():
-    # Update timestamps of all tracked files
-    files = run_command("git ls-files")
-    if files:
-        for file in files.split("\n"):
-            if os.path.exists(file):
-                os.utime(file, None)  # Update access and modification times to current time
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return None
 
 def backup():
-    # Update timestamps first
-    print("Updating timestamps...")
-    update_timestamps()
-    
-    # Add all changes
-    print("Adding changes...")
-    if run_command("git add -A"):  # Changed to -A to handle deletions better
-        # Create commit message with timestamp
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        status = run_command("git status --porcelain")
-        if status:
-            changed_files = [line[3:] for line in status.split("\n") if line and not line.startswith("??")]
-            num_changes = len(changed_files)
+    try:
+        # Add all changes
+        print("Adding changes...")
+        subprocess.run(['git', 'add', '.'], check=True)
+        
+        # Get status
+        status = subprocess.run(['git', 'status', '--porcelain'], 
+                              capture_output=True, text=True, check=True).stdout
+        
+        if status.strip():
+            # Create commit message
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            changed_files = [line[3:] for line in status.split("\n") 
+                           if line and not line.endswith('.DS_Store')]
             
-            # Create more detailed commit message
-            if num_changes > 0:
+            if changed_files:
+                # Format commit message
                 files_list = ", ".join(changed_files[:3])
-                if num_changes > 3:
-                    files_list += f" and {num_changes - 3} more"
+                if len(changed_files) > 3:
+                    files_list += f" and {len(changed_files) - 3} more"
                 msg = f"Update {files_list} [{timestamp}]"
                 
                 # Commit changes
                 print(f"Committing: {msg}")
-                if run_command(f'git commit -m "{msg}"'):
-                    # Push to GitHub
-                    print("Pushing to GitHub...")
-                    if run_command("git push origin main"):
-                        print("Successfully pushed to GitHub!")
-                    else:
-                        print("Failed to push. Check your GitHub credentials.")
-                else:
-                    print("Failed to commit changes.")
+                subprocess.run(['git', 'commit', '-m', msg], check=True)
+                
+                # Push to GitHub
+                print("Pushing to GitHub...")
+                subprocess.run(['git', 'push', 'origin', 'main'], check=True)
+                print("Successfully pushed to GitHub!")
             else:
-                print("No changes to commit.")
+                print("No changes to commit (excluding .DS_Store).")
         else:
             print("No changes to commit.")
-    else:
-        print("Failed to add changes.")
+            
+    except subprocess.CalledProcessError as e:
+        print(f"Git command failed: {e.stderr}")
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
     print("Starting backup...")
